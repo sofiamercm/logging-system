@@ -1,0 +1,3 @@
+# boto3 ya viene preinstalado en el runtime de Lambda (Python 3.x),
+# se deja documentado por si corres/pruebas la funcion localmente.
+boto3
