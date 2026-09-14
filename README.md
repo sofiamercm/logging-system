@@ -8,11 +8,11 @@ procesa automaticamente con una Lambda para generar CSVs.
 ```
 ├── README.md
 ├── scripts
-│   ├── package-lambda.sh     # Empaqueta y despliega la Lambda + trigger de S3
-│   ├── split-log.sh          # Divide un log en batches de ~1KB
-│   ├── send-logs.sh          # Sube los batches a S3 con espera entre cada uno
-│   ├── create-s3-bucket.sh   # Crea el bucket "logging" con sus prefijos
-│   └── teardown.sh           # Elimina todos los recursos creados
+│   ├── package-lambda.sh     
+│   ├── split-log.sh          
+│   ├── send-logs.sh          
+│   ├── create-s3-bucket.sh   
+│   └── teardown.sh           
 └── src
     └── logging-system
         ├── lambda_function.py
