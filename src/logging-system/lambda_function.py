@@ -1,64 +1,49 @@
 """
 Lambda que se dispara cuando se escribe un archivo en s3://logging/input/.
-Descarga el archivo de log de OpenSSH, lo parsea, genera un CSV
-y lo sube a s3://logging/output/.
+Descarga el archivo de log de OpenSSH, lo parsea y guarda cada linea
+como un item en DynamoDB (ya no genera CSV).
 """
 
-import csv
-import io
 import os
-import re
+import uuid
 from urllib.parse import unquote_plus
 
 import boto3
 
 s3 = boto3.client("s3")
+dynamodb = boto3.resource("dynamodb")
 
-OUTPUT_PREFIX = "output/"
-
-# Patron tipico de una linea de log de OpenSSH, por ejemplo:
-# Sep 14 16:30:12 myhost sshd[1234]: Failed password for invalid user admin from 10.0.0.5 port 4444 ssh2
-LOG_PATTERN = re.compile(
-    r"(?P<month>\w{3})\s+(?P<day>\d+)\s+(?P<time>\d{2}:\d{2}:\d{2})\s+"
-    r"(?P<host>\S+)\s+sshd\[(?P<pid>\d+)\]:\s+(?P<message>.*)"
-)
-
-FIELDNAMES = [
-    "month", "day", "time", "host", "pid",
-    "status", "user", "ip", "port", "raw_message",
-]
+# Nombre configurable via variable de entorno, con default por si no se define
+TABLE_NAME = os.environ.get("TABLE_NAME", "logging-system-logs")
+table = dynamodb.Table(TABLE_NAME)
 
 
 def parse_line(line):
-    match = LOG_PATTERN.match(line.strip())
-    if not match:
+    """Convierte una linea cruda de syslog en un dict con los campos del log."""
+    line = line.strip()
+    if not line:
         return None
 
-    data = match.groupdict()
-    message = data["message"]
+    parts = line.split(" ", 5)  # separa solo lo necesario, el resto queda intacto
+    if len(parts) < 6:
+        return None  # linea que no matchea el formato esperado, se ignora
 
-    user_match = re.search(r"user (\S+)", message)
-    ip_match = re.search(r"from ([\d.]+)", message)
-    port_match = re.search(r"port (\d+)", message)
+    month, day, time, hostname, proc_pid, log_message = parts
 
-    if "Failed" in message:
-        status = "failed"
-    elif "Accepted" in message:
-        status = "accepted"
+    # "sshd[24200]:" -> program="sshd", pid="24200"
+    proc_pid = proc_pid.rstrip(":")
+    if "[" in proc_pid and proc_pid.endswith("]"):
+        program, pid = proc_pid.split("[")
+        pid = pid.rstrip("]")
     else:
-        status = "other"
+        program, pid = proc_pid, ""  # por si algun log no trae pid
 
     return {
-        "month": data["month"],
-        "day": data["day"],
-        "time": data["time"],
-        "host": data["host"],
-        "pid": data["pid"],
-        "status": status,
-        "user": user_match.group(1) if user_match else "",
-        "ip": ip_match.group(1) if ip_match else "",
-        "port": port_match.group(1) if port_match else "",
-        "raw_message": message,
+        "timestamp": f"{month} {day} {time}",
+        "hostname": hostname,
+        "program": program,
+        "pid": pid,
+        "log": log_message,
     }
 
 
@@ -69,26 +54,26 @@ def lambda_handler(event, context):
 
         print(f"Procesando s3://{bucket}/{key}")
 
+        # Descarga el batch de logs
         obj = s3.get_object(Bucket=bucket, Key=key)
         content = obj["Body"].read().decode("utf-8", errors="replace")
 
+        # Parsea linea por linea, descartando las que no matcheen
         rows = [parse_line(line) for line in content.splitlines()]
         rows = [r for r in rows if r is not None]
 
-        csv_buffer = io.StringIO()
-        writer = csv.DictWriter(csv_buffer, fieldnames=FIELDNAMES)
-        writer.writeheader()
-        writer.writerows(rows)
+        source_file = os.path.basename(key)
 
-        base_name = os.path.splitext(os.path.basename(key))[0]
-        output_key = f"{OUTPUT_PREFIX}{base_name}.csv"
+        # batch_writer agrupa los puts en lotes de 25 automaticamente
+        with table.batch_writer() as batch:
+            for row in rows:
+                item = {
+                    "log_id": str(uuid.uuid4()),  # partition key unica por linea
+                    "source_file": source_file,   # trazabilidad al batch original
+                    **row,
+                }
+                batch.put_item(Item=item)
 
-        s3.put_object(
-            Bucket=bucket,
-            Key=output_key,
-            Body=csv_buffer.getvalue().encode("utf-8"),
-        )
-
-        print(f"CSV generado: s3://{bucket}/{output_key} ({len(rows)} filas)")
+        print(f"{len(rows)} items escritos en DynamoDB (tabla: {TABLE_NAME})")
 
     return {"statusCode": 200, "body": "OK"}
