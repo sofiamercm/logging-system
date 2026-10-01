@@ -57,7 +57,12 @@
                 "batch_key": { "S.$": "$.batch_key" },
                 "line_number": { "N.$": "States.Format('{}', $.line_number)" },
                 "message": { "S.$": "$.message" },
-                "classification": { "S": "suspicious" }
+                "classification": { "S": "suspicious" },
+                "timestamp": { "S.$": "$.timestamp" },
+                "host": { "S.$": "$.host" },
+                "log": { "S.$": "$.message" },
+                "severity": { "S": "HIGH" },
+                "LastModified": { "S.$": "$.LastModified" }
               }
             },
             "Retry": [
@@ -92,7 +97,12 @@
                 "batch_key": { "S.$": "$.batch_key" },
                 "line_number": { "N.$": "States.Format('{}', $.line_number)" },
                 "message": { "S.$": "$.message" },
-                "classification": { "S": "normal" }
+                "classification": { "S": "normal" },
+                "timestamp": { "S.$": "$.timestamp" },
+                "host": { "S.$": "$.host" },
+                "log": { "S.$": "$.message" },
+                "all_logs": { "S": "ALL" },
+                "LastModified": { "S.$": "$.LastModified" }
               }
             },
             "Retry": [

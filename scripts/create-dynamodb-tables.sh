@@ -24,3 +24,28 @@ create_table() {
 create_table "$LOGS_TABLE"
 create_table "$ALERTS_TABLE"
 echo "Listo: tablas ${LOGS_TABLE} y ${ALERTS_TABLE} creadas en ${REGION}."
+
+# Agrega el indice a Logs sin borrar ni recrear las tablas existentes.
+INDEX_EXISTS=$(aws dynamodb describe-table --table-name "$LOGS_TABLE" \
+  --query "Table.GlobalSecondaryIndexes[?IndexName=='${LOGS_INDEX}'].IndexName | [0]" --output text)
+if [ "$INDEX_EXISTS" = "None" ] || [ -z "$INDEX_EXISTS" ]; then
+  echo "Agregando GSI ${LOGS_INDEX} a ${LOGS_TABLE}..."
+  aws dynamodb update-table --table-name "$LOGS_TABLE" \
+    --attribute-definitions AttributeName=all_logs,AttributeType=S AttributeName=LastModified,AttributeType=S \
+    --global-secondary-index-updates "[{\"Create\":{\"IndexName\":\"${LOGS_INDEX}\",\"KeySchema\":[{\"AttributeName\":\"all_logs\",\"KeyType\":\"HASH\"},{\"AttributeName\":\"LastModified\",\"KeyType\":\"RANGE\"}],\"Projection\":{\"ProjectionType\":\"ALL\"}}}]" > /dev/null
+fi
+
+# table-exists no espera que un GSI termine de crearse.
+INDEX_STATUS=""
+for ((attempt=1; attempt<=180; attempt++)); do
+  INDEX_STATUS=$(aws dynamodb describe-table --table-name "$LOGS_TABLE" \
+    --query "Table.GlobalSecondaryIndexes[?IndexName=='${LOGS_INDEX}'].IndexStatus | [0]" --output text)
+  if [ "$INDEX_STATUS" = "ACTIVE" ]; then break; fi
+  echo "Esperando al indice ${LOGS_INDEX} (${INDEX_STATUS})..."
+  sleep 10
+done
+if [ "$INDEX_STATUS" != "ACTIVE" ]; then
+  echo "El GSI aun no esta activo; revisa DynamoDB y vuelve a ejecutar este script." >&2
+  exit 1
+fi
+echo "GSI ${LOGS_INDEX} listo (all_logs / LastModified)."
